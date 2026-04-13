@@ -77,59 +77,31 @@ if menu == "1. 데이터 업로드 및 관리":
     receipt_file = st.file_uploader("경리나라 수납 파일 업로드", type=['xlsx', 'xls', 'csv'], key="receipt")
     if receipt_file:
         df_receipt = load_file_generic(receipt_file, skip_rows=0)
-        # 첫 행이 헤더인 경우 제외 처리
         if not df_receipt.empty and ('사업자' in str(df_receipt.iloc[0, 0])):
             df_receipt = df_receipt.iloc[1:].reset_index(drop=True)
-        
         df_receipt_final = df_receipt.iloc[:, :13].copy()
         for c in range(df_receipt_final.shape[1], 13): df_receipt_final[c] = ""
         st.dataframe(df_receipt_final.head(3))
         if st.button("경리나라 수납 데이터 반영"):
             overwrite_google_sheet(doc, "경리나라 수납", df_receipt_final)
-            st.success("✅ 수납 데이터 반영 완료")
+            st.success("✅ 반영 완료")
 
     st.divider()
 
-    # 2. 추천 데이터 (수정됨: 3행 제외 및 M열 반영)
+    # 2. 추천 데이터 (3행 제외, M열 반영)
     st.subheader("2. 추천 데이터 (3행 제외, M열 → 추천일 반영)")
     referral_file = st.file_uploader("추천 파일 업로드", type=['xlsx', 'xls', 'csv'], key="referral")
     if referral_file:
-        # 3행까지 날리고 읽기 (skiprows=3)
         df_raw = load_file_generic(referral_file, skip_rows=3)
-        
         if not df_raw.empty:
-            # 컬럼 매핑: 사업자번호(A), 추천유형(B), 사업자번호(C), 회사명(D), 신청일(M -> E열로 이동), 추천회사(AT), 추천자 사업자(AU), 추천자(AV)
-            # 신청일은 M열(인덱스 12)
-            try:
-                target_indices = [
-                    0,               # A: 사업자번호 (인덱스 0)
-                    1,               # B: 추천유형 (인덱스 1)
-                    2,               # C: 사업자번호 (인덱스 2)
-                    3,               # D: 회사명 (인덱스 3)
-                    12,              # E: 신청일 (M열, 인덱스 12) -> 추천일로 사용
-                    col2idx('AT'),   # F: 추천회사
-                    col2idx('AU'),   # G: 추천자 사업자번호
-                    col2idx('AV')    # H: 추천자
-                ]
-                
-                # 열이 부족할 경우를 대비해 안전하게 추출
-                df_referral_final = df_raw.iloc[:, [i for i in target_indices if i < df_raw.shape[1]]].copy()
-                
-                # 사업자번호 하이픈 제거 (A열 기준)
-                df_referral_final.iloc[:, 0] = df_referral_final.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
-                
-                # 8개 열 맞추기
-                for c in range(df_referral_final.shape[1], 8): 
-                    df_referral_final[c] = ""
-                
-                st.write("추출된 데이터 미리보기 (상단 3행 제외 및 M열 반영됨):")
-                st.dataframe(df_referral_final.head(5))
-                
-                if st.button("추천 데이터 누적 추가"):
-                    append_to_google_sheet(doc, "추천", df_referral_final)
-                    st.success("✅ 추천 데이터 누적 완료 (M열이 추천일로 저장되었습니다)")
-            except Exception as e:
-                st.error(f"데이터 추출 중 오류 발생: {e}. 파일의 열 구성을 확인해주세요.")
+            target_indices = [0, 1, 2, 3, 12, col2idx('AT'), col2idx('AU'), col2idx('AV')]
+            df_referral_final = df_raw.iloc[:, [i for i in target_indices if i < df_raw.shape[1]]].copy()
+            df_referral_final.iloc[:, 0] = df_referral_final.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
+            for c in range(df_referral_final.shape[1], 8): df_referral_final[c] = ""
+            st.dataframe(df_referral_final.head(5))
+            if st.button("추천 데이터 누적 추가"):
+                append_to_google_sheet(doc, "추천", df_referral_final)
+                st.success("✅ 추천 데이터 누적 완료")
 
     st.divider()
 
@@ -138,13 +110,10 @@ if menu == "1. 데이터 업로드 및 관리":
     wemembers_file = st.file_uploader("위멤버스 가입 여부 파일 업로드", type=['xlsx', 'xls', 'csv'], key="wemembers")
     if wemembers_file:
         df_we = load_file_generic(wemembers_file, skip_rows=0)
-        # 헤더 처리
         if not df_we.empty and ('사업자' in str(df_we.iloc[0, 0])):
             df_we = df_we.iloc[1:].reset_index(drop=True)
-
         if df_we.shape[1] <= 5: target_indices = [0, 1, 2]
         else: target_indices = [col2idx('D'), col2idx('G'), col2idx('BQ')]
-            
         df_we_final = df_we.iloc[:, [i for i in target_indices if i < df_we.shape[1]]].copy()
         if df_we_final.shape[1] > 0:
             df_we_final.iloc[:, 0] = df_we_final.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
@@ -152,10 +121,10 @@ if menu == "1. 데이터 업로드 및 관리":
         st.dataframe(df_we_final.head(3))
         if st.button("위멤버스 데이터 시트에 반영"):
             overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
-            st.success("✅ 위멤버스 반영 완료")
+            st.success("✅ 반영 완료")
 
 # ==========================================
-# 2. 포인트 지급 대상 조회 및 보고서 (기존 유지)
+# 2. 포인트 지급 대상 조회 페이지
 # ==========================================
 elif menu == "2. 포인트 지급 대상 조회":
     st.header("🎯 포인트 지급 내역 산출")
@@ -164,56 +133,4 @@ elif menu == "2. 포인트 지급 대상 조회":
             receipt_data = doc.worksheet("경리나라 수납").get_all_values()
             referral_data = doc.worksheet("추천").get_all_values()
             wemembers_data = doc.worksheet("위멤버스 가입 여부").get_all_values()
-            rate_data = doc.worksheet("적립율").get_all_values()
-            
-            # 데이터 로드 및 전처리 (생략 없이 포인트 로직 작동)
-            r_df = pd.DataFrame(receipt_data)
-            ref_df = pd.DataFrame(referral_data)
-            
-            r_df.columns = [f"r_{i}" for i in range(len(r_df.columns))]
-            ref_df.columns = [f"ref_{i}" for i in range(len(ref_df.columns))]
-
-            rate_dict = {str(row[0]).replace('-', '').strip(): float(str(row[1]).replace('%','')) for row in rate_data if len(row) >= 2}
-            we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2]} for row in wemembers_data if len(row) >= 3}
-
-        try:
-            r_df["r_5"] = pd.to_numeric(r_df["r_5"], errors='coerce')
-            filtered_r = r_df[(r_df["r_5"].isna()) | (r_df["r_5"] < 60)].copy()
-            merged_df = pd.merge(filtered_r, ref_df, left_on="r_0", right_on="ref_0")
-
-            results = []
-            for _, row in merged_df.iterrows():
-                rec_biz_raw = str(row.get("ref_6", ""))
-                rec_biz_clean = rec_biz_raw.replace('-', '').strip()
-                we_info = we_dict.get(rec_biz_clean, {'제품명': '', '비고': ''})
-                
-                # 2025년 12월 31일 이전 데이터 필터링 예시 (기존 로직 유지)
-                rec_date_raw = str(row.get("ref_4", ""))
-                
-                base_amt = pd.to_numeric(row.get("r_3", 0), errors='coerce') or 0
-                rate = rate_dict.get(rec_biz_clean, 0.03)
-                
-                results.append({
-                    "수납_상호": row.get("r_1", ""),
-                    "추천일": rec_date_raw,
-                    "위멤버스_비고(BQ)": we_info['비고'],
-                    "추천자 회사명": str(row.get("ref_5", "")),
-                    "추천자 사업자번호": rec_biz_raw,
-                    "최종 지급포인트": base_amt * rate
-                })
-
-            final_df = pd.DataFrame(results)
-            if not final_df.empty:
-                st.dataframe(final_df, use_container_width=True)
-                
-                # 📊 [보고서] 추천자별 피벗 합계
-                st.divider()
-                st.subheader("📋 포인트 지급 내역 합계 보고서")
-                summary_df = final_df.groupby(["위멤버스_비고(BQ)", "추천자 회사명", "추천자 사업자번호"])["최종 지급포인트"].sum().reset_index()
-                st.dataframe(summary_df, use_container_width=True)
-            else:
-                st.info("조회된 데이터가 없습니다.")
-        except Exception as e:
-            st.error(f"오류 발생: {e}")
-
-# (이하 상품권 메뉴 등 기존 코드 유지...)
+            rate_data
