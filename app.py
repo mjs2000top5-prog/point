@@ -76,7 +76,8 @@ if menu == "1. 데이터 업로드 및 관리":
 
     st.subheader("1. 경리나라 수납 데이터 업로드 (첫 행 제외)")
     if st.button("🗑️ 기존 수납 데이터 일괄 삭제", key="clear_r"):
-        clear_google_sheet(doc, "경리나라 수납")
+        if clear_google_sheet(doc, "경리나라 수납"):
+            st.warning("경리나라 수납 데이터가 삭제되었습니다.")
 
     receipt_file = st.file_uploader("수납 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u1")
     if receipt_file:
@@ -123,7 +124,6 @@ elif menu == "2. 포인트 지급 대상 조회":
                 r_df = pd.DataFrame(r_values).fillna("")
                 ref_df = pd.DataFrame(ref_values).fillna("")
                 
-                # 적립율 매핑 (오류 방지)
                 rate_dict = {}
                 for row in rate_values:
                     if len(row) >= 2:
@@ -133,7 +133,6 @@ elif menu == "2. 포인트 지급 대상 조회":
                             rate_dict[biz] = val/100 if val > 1 else val
                         except: continue
 
-                # 위멤버스 매핑
                 we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2]} for row in we_values if len(row) >= 3}
 
                 results = []
@@ -144,26 +143,29 @@ elif menu == "2. 포인트 지급 대상 조회":
                     if matched_rows.empty: continue
                     
                     for _, r_row in matched_rows.iterrows():
-                        # [조건 1] 수납횟수(G열=인덱스 6) 필터링 (0회 제외 및 60회 이상 제외)
+                        # [조건 1] 수납횟수(G열=인덱스 6) 필터링 (0회 이하 및 60회 이상 제외)
                         raw_count = str(r_row[6]).strip() if len(r_row) > 6 else "0"
                         pay_count = pd.to_numeric(raw_count, errors='coerce')
-                        if pd.isna(pay_count): pay_count = 0
-                        
-                        # 0회 제외 및 60회 이상 제외 로직
-                        if pay_count <= 0 or pay_count >= 60:
+                        if pd.isna(pay_count) or pay_count <= 0 or pay_count >= 60:
                             continue
 
-                        # [조건 2] 설치일(C열=인덱스 2) 필터링 (2026-01-01 이후 제외)
+                        # [조건 2] 청구금액(E열=인덱스 4) 필터링 (40,000원 미만 제외)
+                        raw_bill = str(r_row[4]).replace(',','').strip() if len(r_row) > 4 else "0"
+                        bill_amt = pd.to_numeric(raw_bill, errors='coerce')
+                        if pd.isna(bill_amt) or bill_amt < 40000:
+                            continue
+
+                        # [조건 3] 설치일(C열=인덱스 2) 필터링 (2026-01-01 이후 제외)
                         install_date_raw = str(r_row[2]) if len(r_row) > 2 else ""
                         install_clean = ''.join(filter(str.isdigit, install_date_raw))
                         if install_clean and len(install_clean) >= 8:
                             if int(install_clean[:8]) >= 20260101: continue
                         
-                        # [조건 3] 추천 기한 필터링
+                        # [조건 4] 추천 기한 필터링 (20251231)
                         rec_date = str(ref_row[4])
                         if ''.join(filter(str.isdigit, rec_date)) > "20251231": continue
 
-                        # [조건 4] 위멤버스 제품 필터링 (베이직 제외)
+                        # [조건 5] 위멤버스 제품 필터링 (베이직 제외)
                         rec_biz_raw = str(ref_row[6])
                         rec_biz_clean = rec_biz_raw.replace('-', '').strip()
                         we_info = we_dict.get(rec_biz_clean, {'제품명': '', '비고': ''})
@@ -171,11 +173,6 @@ elif menu == "2. 포인트 지급 대상 조회":
                         if not we_product_name or "위멤버스 베이직" in we_product_name:
                             continue
 
-                        # 청구금액(E열=인덱스 4) 추출 및 계산
-                        raw_bill = str(r_row[4]).replace(',','').strip() if len(r_row) > 4 else "0"
-                        bill_amt = pd.to_numeric(raw_bill, errors='coerce')
-                        if pd.isna(bill_amt): bill_amt = 0.0
-                        
                         rate = rate_dict.get(rec_biz_clean, 0.03)
                         final_p = bill_amt * rate
                         
@@ -195,13 +192,13 @@ elif menu == "2. 포인트 지급 대상 조회":
 
                 final_df = pd.DataFrame(results)
                 if not final_df.empty:
-                    st.success(f"분석 완료: 총 {len(final_df)}건 (수납횟수 1~59회 필터 적용)")
+                    st.success(f"분석 완료: 총 {len(final_df)}건 (청구금액 4만 원 이상만 포함)")
                     st.dataframe(final_df, use_container_width=True)
                     st.divider()
                     st.subheader("📋 추천자별 합계 보고서")
                     summary = final_df.groupby(["추천자회사", "추천자사업자", "위멤버스_비고"])["최종지급포인트"].sum().reset_index()
                     st.dataframe(summary, use_container_width=True)
-                    st.download_button("📥 산출 내역 다운로드", final_df.to_csv(index=False).encode('utf-8-sig'), "point_calc_final.csv")
+                    st.download_button("📥 내역 다운로드", final_df.to_csv(index=False).encode('utf-8-sig'), "point_result.csv")
                 else:
                     st.info("조건을 충족하는 매칭 데이터가 없습니다.")
             except Exception as e:
