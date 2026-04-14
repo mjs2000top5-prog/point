@@ -89,11 +89,16 @@ if menu == "1. 데이터 업로드 및 관리":
     receipt_file = st.file_uploader("수납 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u1")
     if receipt_file:
         df_raw = load_file_generic(receipt_file, skip_rows=1)
-        # G(6), I(8), E(4), W(22), X(23), AA(26), AL(37), AM(38)
+        # 중요: 계산에 필요한 E열을 포함하여 추출
         t_cols = ['G', 'I', 'E', 'W', 'X', 'AA', 'AL', 'AM']
         t_idxs = [col2idx(c) for c in t_cols]
         df_final = df_raw.iloc[:, [i for i in t_idxs if i < df_raw.shape[1]]].copy()
-        df_final.iloc[:, 0] = df_final.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
+        
+        # G열(인덱스 0) 하이픈 제거
+        if df_final.shape[1] > 0:
+            df_final.iloc[:, 0] = df_final.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
+        
+        st.write("미리보기 (3번째 열이 청구금액 E열입니다):")
         st.dataframe(df_final.head(3))
         if st.button("경리나라 수납 반영"):
             overwrite_google_sheet(doc, "경리나라 수납", df_final)
@@ -102,7 +107,7 @@ if menu == "1. 데이터 업로드 및 관리":
     st.divider()
 
     # 1-2. 추천 데이터
-    st.subheader("2. 추천 데이터 (3행 제외, C->A 복사, M->E 반영)")
+    st.subheader("2. 추천 데이터 (3행 제외, C->A 복사)")
     referral_file = st.file_uploader("추천 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u2")
     if referral_file:
         df_raw = load_file_generic(referral_file, skip_rows=3)
@@ -149,12 +154,14 @@ elif menu == "2. 포인트 지급 대상 조회":
             we_data = doc.worksheet("위멤버스 가입 여부").get_all_values()
             rate_data = doc.worksheet("적립율").get_all_values()
             
-            if not r_data or not ref_data: st.stop()
+            if not r_data or not ref_data: 
+                st.info("수납 또는 추천 데이터가 시트에 없습니다.")
+                st.stop()
 
             r_df = pd.DataFrame(r_data)
             ref_df = pd.DataFrame(ref_data)
             
-            # 적립율 딕셔너리 (없으면 0.03)
+            # 적립율 딕셔너리
             rate_dict = {}
             for row in rate_data:
                 if len(row) >= 2:
@@ -170,7 +177,7 @@ elif menu == "2. 포인트 지급 대상 조회":
             r_df.columns = [f"r_{i}" for i in range(len(r_df.columns))]
             ref_df.columns = [f"ref_{i}" for i in range(len(ref_df.columns))]
             
-            # 수납 r_0(사업자) - 추천 ref_0(사업자) 매칭
+            # 매칭 (수납 G열 r_0 - 추천 A열 ref_0)
             merged = pd.merge(r_df, ref_df, left_on="r_0", right_on="ref_0")
 
             results = []
@@ -178,15 +185,19 @@ elif menu == "2. 포인트 지급 대상 조회":
                 rec_biz_raw = str(row.get("ref_6", ""))
                 rec_biz_clean = rec_biz_raw.replace('-', '').strip()
                 
-                # 기한 필터링
+                # 기한 필터링 (20251231)
                 rec_date = str(row.get("ref_4", ""))
                 if ''.join(filter(str.isdigit, rec_date)) > "20251231": continue
 
                 we_info = we_dict.get(rec_biz_clean, {'제품명': '', '비고': ''})
                 if not str(we_info['제품명']).strip(): continue
 
-                # r_2가 E열(청구금액)임
-                bill_amt = pd.to_numeric(str(row.get("r_2", "0")).replace(',',''), errors='coerce') or 0
+                # [핵심 수식] 청구금액(r_2) 반영
+                # r_df의 인덱스 r_2는 업로드 시 추출한 세 번째 열(E열)입니다.
+                raw_bill = str(row.get("r_2", "0")).replace(',','').strip()
+                bill_amt = pd.to_numeric(raw_bill, errors='coerce') or 0
+                
+                # 적립율 (기본 3%)
                 rate = rate_dict.get(rec_biz_clean, 0.03)
                 
                 results.append({
@@ -198,23 +209,64 @@ elif menu == "2. 포인트 지급 대상 조회":
                     "위멤버스_비고(BQ)": we_info['비고'],
                     "적립율": rate,
                     "청구금액": bill_amt,
-                    "최종 지급 포인트": bill_amt * rate
+                    "최종 지급 포인트": int(bill_amt * rate)
                 })
 
             final_df = pd.DataFrame(results)
             if not final_df.empty:
+                st.success(f"분석 완료: 총 {len(final_df)}건")
                 st.dataframe(final_df, use_container_width=True)
+                
                 st.divider()
                 st.subheader("📋 추천자별 합계 보고서")
                 summary = final_df.groupby(["추천자 회사명", "추천자 사업자번호", "위멤버스_비고(BQ)"])["최종 지급 포인트"].sum().reset_index()
                 st.dataframe(summary, use_container_width=True)
-                st.download_button("📥 다운로드", final_df.to_csv(index=False).encode('utf-8-sig'), "point_report.csv")
+                st.download_button("📥 상세 결과 다운로드", final_df.to_csv(index=False).encode('utf-8-sig'), "point_calc_result.csv")
+            else:
+                st.info("조건을 만족하는 지급 대상 데이터가 없습니다.")
         except Exception as e:
-            st.error(f"오류: {e}")
+            st.error(f"계산 중 오류 발생: {e}")
 
 # ==========================================
 # 3. 상품권 지급 대상 조회
 # ==========================================
 elif menu == "3. 상품권 지급 대상 조회":
     st.header("🎟️ 상품권 지급 대상 (1회차 수납)")
-    # (포인트 조회 로직과 유사하게 1회차 필터링하여 구현)
+    if doc:
+        with st.spinner("대상 조회 중..."):
+            r_data = doc.worksheet("경리나라 수납").get_all_values()
+            ref_data = doc.worksheet("추천").get_all_values()
+            we_data = doc.worksheet("위멤버스 가입 여부").get_all_values()
+            
+            if not r_data: st.stop()
+            
+            r_df = pd.DataFrame(r_data)
+            ref_df = pd.DataFrame(ref_data)
+            r_df.columns = [f"r_{i}" for i in range(len(r_df.columns))]
+            ref_df.columns = [f"ref_{i}" for i in range(len(ref_df.columns))]
+            
+            we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2]} for row in we_data if len(row) >= 3}
+
+        try:
+            # r_5가 입금횟수(AL열)인 경우 1회차 필터링
+            r_df["r_5"] = pd.to_numeric(r_df["r_5"], errors='coerce')
+            filtered_r = r_df[r_df["r_5"] == 1].copy()
+            merged_g = pd.merge(filtered_r, ref_df, left_on="r_0", right_on="ref_0")
+
+            if not merged_g.empty:
+                g_results = []
+                for _, row in merged_g.iterrows():
+                    rec_biz = str(row.get("ref_6", "")).replace('-', '').strip()
+                    we_info = we_dict.get(rec_biz, {'제품명': '', '비고': ''})
+                    g_results.append({
+                        "수납사명": row.get("r_1"),
+                        "사업자번호": row.get("r_0"),
+                        "회차": row.get("r_5"),
+                        "추천자": row.get("ref_7"),
+                        "위멤버스_비고": we_info['비고']
+                    })
+                st.dataframe(pd.DataFrame(g_results), use_container_width=True)
+            else:
+                st.info("1회차 수납 대상자가 없습니다.")
+        except Exception as e:
+            st.error(f"조회 오류: {e}")
