@@ -106,22 +106,38 @@ if menu == "1. 데이터 업로드 및 관리":
                 st.success("누적 완료")
 
     st.divider()
-
-    # 1-3. 위멤버스 가입 여부 (복구됨)
-    st.subheader("3. 위멤버스 가입 여부 업로드")
+# 1-3. 위멤버스 가입 여부 업로드 로직 (수정본)
+    st.subheader("3. 위멤버스 가입 여부 업로드 (D열 하이픈 제거, G/BQ열 추출)")
     if st.button("🗑️ 기존 위멤버스 데이터 삭제", key="clear_we"):
         clear_google_sheet(doc, "위멤버스 가입 여부")
     
     we_file = st.file_uploader("위멤버스 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u3")
     if we_file:
-        df_we = load_file_generic(we_file, skip_rows=0)
-        if not df_we.empty:
-            # 사업자번호 열 하이픈 제거
-            df_we.iloc[:, 0] = df_we.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
-            st.dataframe(df_we.head(3))
-            if st.button("위멤버스 시트 반영"):
-                overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we)
-                st.success("반영 완료")
+        # 데이터 로드 (헤더 포함 여부에 따라 skip_rows 조정 가능, 여기선 0으로 설정)
+        df_we_raw = load_file_generic(we_file, skip_rows=0)
+        
+        if not df_we_raw.empty:
+            try:
+                # 1. D열(인덱스 3)의 하이픈 제거 후 A열(인덱스 0)로 복사 (매칭용)
+                # 만약 원본 D열 자체를 수정하고 싶다면 df_we_raw.iloc[:, 3]를 수정
+                df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
+                
+                # 2. 필요한 열 선택: D(3), G(6), BQ(68) 
+                # *열 번호를 인덱스로 변환: D=3, G=6, BQ=68 (A=0 기준)
+                target_cols = [3, 6, 68]
+                
+                # 실제 파일의 열 개수가 BQ(68)보다 적을 경우를 대비해 필터링
+                available_cols = [i for i in target_cols if i < df_we_raw.shape[1]]
+                df_we_final = df_we_raw.iloc[:, available_cols].copy()
+                
+                st.write("업로드 예정 데이터 미리보기 (D, G, BQ열):")
+                st.dataframe(df_we_final.head(3))
+                
+                if st.button("위멤버스 시트 반영"):
+                    overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
+                    st.success("D열 하이픈 제거 및 G, BQ열 추출하여 반영 완료")
+            except Exception as e:
+                st.error(f"위멤버스 데이터 가공 중 오류 발생: {e}")
 
 # ==========================================
 # 데이터 처리 공통 로직 함수 (포인트/상품권 공용)
