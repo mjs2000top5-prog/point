@@ -75,9 +75,7 @@ if menu == "1. 데이터 업로드 및 관리":
     st.subheader("1. 경리나라 수납 데이터 (첫 행 제외 및 13개열 추출)")
     receipt_file = st.file_uploader("경리나라 수납 파일 업로드", type=['xlsx', 'xls', 'csv'], key="receipt")
     if receipt_file:
-        df_receipt = load_file_generic(receipt_file, skip_rows=0)
-        if not df_receipt.empty and ('사업자' in str(df_receipt.iloc[0, 0])):
-            df_receipt = df_receipt.iloc[1:].reset_index(drop=True)
+        df_receipt = load_file_without_header(receipt_file)
         df_receipt_final = df_receipt.iloc[:, :13].copy()
         for c in range(df_receipt_final.shape[1], 13): df_receipt_final[c] = ""
         st.dataframe(df_receipt_final.head(3))
@@ -86,6 +84,7 @@ if menu == "1. 데이터 업로드 및 관리":
             st.success("✅ 수납 데이터 반영 완료")
 
     st.divider()
+
 
     # 1-2. 추천 데이터 (3행 제외, C열 -> A열 복사, M열 -> 추천일 반영)
     st.subheader("2. 추천 데이터 (3행 제외, C열을 A열로 복사)")
