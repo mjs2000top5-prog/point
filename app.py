@@ -25,17 +25,17 @@ def authenticate_gspread():
         return None
 
 def clear_google_sheet(doc, sheet_name):
-    """시트의 모든 데이터를 삭제하는 함수"""
+    """시트의 모든 데이터를 삭제"""
     try:
         worksheet = doc.worksheet(sheet_name)
         worksheet.clear()
         return True
     except Exception as e:
-        st.error(f"'{sheet_name}' 시트 삭제 중 오류 발생: {e}")
+        st.error(f"'{sheet_name}' 시트 삭제 오류: {e}")
         return False
 
 def overwrite_google_sheet(doc, sheet_name, df):
-    """기존 데이터를 지우고 새로운 데이터프레임을 업로드하는 함수"""
+    """시트 데이터 덮어쓰기"""
     try:
         worksheet = doc.worksheet(sheet_name)
         worksheet.clear()
@@ -44,28 +44,19 @@ def overwrite_google_sheet(doc, sheet_name, df):
             worksheet.update(df.values.tolist())
         return True
     except Exception as e:
-        st.error(f"'{sheet_name}' 업데이트 중 오류 발생: {e}")
+        st.error(f"'{sheet_name}' 업데이트 오류: {e}")
         return False
 
 def append_to_google_sheet(doc, sheet_name, df):
-    """기존 데이터 아래에 새로운 데이터를 누적하는 함수"""
+    """시트 데이터 누적"""
     try:
         worksheet = doc.worksheet(sheet_name)
         df = df.fillna("")
         worksheet.append_rows(df.values.tolist())
         return True
     except Exception as e:
-        st.error(f"'{sheet_name}' 누적 중 오류 발생: {e}")
+        st.error(f"'{sheet_name}' 누적 오류: {e}")
         return False
-
-def col2idx(col_str):
-    """엑셀 열 문자를 인덱스 숫자로 변환 (A->0, E->4 등)"""
-    expn = 0
-    col_num = 0
-    for char in reversed(col_str.upper()):
-        col_num += (ord(char) - ord('A') + 1) * (26 ** expn)
-        expn += 1
-    return col_num - 1
 
 def load_file_generic(file, skip_rows=0):
     if file.name.endswith('.csv'):
@@ -98,11 +89,11 @@ if menu == "1. 데이터 업로드 및 관리":
         if not df_receipt.empty:
             # 매칭용 A열 하이픈 제거
             df_receipt.iloc[:, 0] = df_receipt.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
-            st.write("📊 업로드 대기 중인 데이터 미리보기:")
+            st.write("📊 업로드 대기 데이터 미리보기 (A열 가공 완료):")
             st.dataframe(df_receipt.head(3))
-            if st.button("경리나라 수납 시트 반영 (덮어쓰기)"):
+            if st.button("경리나라 수납 시트 반영"):
                 overwrite_google_sheet(doc, "경리나라 수납", df_receipt)
-                st.success("구글 시트 반영 완료")
+                st.success("반영 완료")
 
     st.divider()
 
@@ -120,7 +111,26 @@ if menu == "1. 데이터 업로드 및 관리":
             st.dataframe(df_ref_final.head(3))
             if st.button("추천 데이터 누적 추가"):
                 append_to_google_sheet(doc, "추천", df_ref_final)
-                st.success("추천 데이터 누적 완료")
+                st.success("누적 완료")
+
+    st.divider()
+
+    # 1-3. 위멤버스 가입 여부 데이터
+    st.subheader("3. 위멤버스 데이터 관리")
+    if st.button("🗑️ 기존 위멤버스 데이터 삭제", key="clear_we"):
+        clear_google_sheet(doc, "위멤버스 가입 여부")
+    we_file = st.file_uploader("위멤버스 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u3")
+    if we_file:
+        df_we = load_file_generic(we_file, skip_rows=0)
+        # 헤더 제외 로직
+        if not df_we.empty and '사업자' in str(df_we.iloc[0, 0]):
+            df_we = df_we.iloc[1:].reset_index(drop=True)
+        # 매칭용 사업자번호 하이픈 제거
+        df_we.iloc[:, 0] = df_we.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
+        st.dataframe(df_we.head(3))
+        if st.button("위멤버스 시트 반영"):
+            overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we)
+            st.success("반영 완료")
 
 # ==========================================
 # 2. 포인트 지급 대상 조회 및 보고서
@@ -128,76 +138,71 @@ if menu == "1. 데이터 업로드 및 관리":
 elif menu == "2. 포인트 지급 대상 조회":
     st.header("🎯 포인트 지급 내역 산출")
     if doc:
-        with st.spinner("수납 시트 A열과 매칭하여 청구금액 계산 중..."):
+        with st.spinner("데이터 매칭 및 필터링 적용 중..."):
             try:
-                # 모든 시트 데이터 로드
+                # 데이터 로드
                 r_values = doc.worksheet("경리나라 수납").get_all_values()
                 ref_values = doc.worksheet("추천").get_all_values()
                 we_values = doc.worksheet("위멤버스 가입 여부").get_all_values()
                 rate_values = doc.worksheet("적립율").get_all_values()
                 
                 if not r_values or not ref_values:
-                    st.warning("데이터가 부족합니다. 먼저 업로드를 진행해주세요.")
+                    st.warning("수납 또는 추천 데이터가 부족합니다.")
                     st.stop()
 
-                # 데이터프레임 변환 및 전처리
                 r_df = pd.DataFrame(r_values).fillna("")
                 ref_df = pd.DataFrame(ref_values).fillna("")
                 
-                # 적립율 딕셔너리 구성 (기본 0.03)
-                rate_dict = {}
-                for row in rate_values:
-                    if len(row) >= 2:
-                        biz = str(row[0]).replace('-', '').strip()
-                        try:
-                            v = str(row[1]).replace('%','').strip()
-                            rate_dict[biz] = float(v)/100 if float(v) > 1 else float(v)
-                        except: continue
+                # 적립율 매핑 사전
+                rate_dict = {str(row[0]).replace('-', '').strip(): (float(str(row[1]).replace('%',''))/100 if float(str(row[1]).replace('%','')) > 1 else float(str(row[1]).replace('%',''))) 
+                             for row in rate_values if len(row) >= 2}
+                # 위멤버스 매핑 사전
+                we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2]} for row in we_values if len(row) >= 3}
 
-                # 위멤버스 정보 구성
-                we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2]} 
-                           for row in we_values if len(row) >= 3}
-
-                # 포인트 산출 로직
                 results = []
                 for _, ref_row in ref_df.iterrows():
                     target_biz = str(ref_row[0]).replace('-', '').strip() # 추천 시트 A열
+                    matched_rows = r_df[r_df[0] == target_biz] # 수납 시트 A열 매칭
                     
-                    # [매칭] 수납 시트의 A열(0번 인덱스)에서 사업자번호 찾기
-                    matched_rows = r_df[r_df[0] == target_biz]
                     if matched_rows.empty: continue
                     
                     for _, r_row in matched_rows.iterrows():
-                        rec_biz_raw = str(ref_row[6]) # 추천 시트 AU열
+                        # [조건 1] 설치일(C열=인덱스2) 필터링 (2026-01-01 이후 제외)
+                        install_date_raw = str(r_row[2]) if len(r_row) > 2 else ""
+                        install_clean = ''.join(filter(str.isdigit, install_date_raw))
+                        if install_clean and len(install_clean) >= 8:
+                            if int(install_clean[:8]) >= 20260101: continue
+                        
+                        rec_biz_raw = str(ref_row[6]) # 추천 AU열
                         rec_biz_clean = rec_biz_raw.replace('-', '').strip()
                         
-                        # 기한 필터링 (20251231 이후 데이터 제외)
+                        # [조건 2] 추천 기한 필터링 (20251231)
                         rec_date = str(ref_row[4])
                         if ''.join(filter(str.isdigit, rec_date)) > "20251231": continue
 
-                        # 추천인에 해당하는 위멤버스 정보 확인
+                        # 추천인에 대한 위멤버스 정보 확인
                         we_info = we_dict.get(rec_biz_clean, {'제품명': '', '비고': ''})
-                        if not str(we_info['제품명']).strip(): continue
+                        we_product_name = str(we_info['제품명']).strip()
+
+                        # [조건 3] 위멤버스 베이직 제외 (제품명이 비어있거나 '베이직' 포함 시 제외)
+                        if not we_product_name or "위멤버스 베이직" in we_product_name:
+                            continue
 
                         # [청구금액 추출 및 NaN 방지] 수납 시트 E열(인덱스 4)
                         raw_bill = str(r_row[4]).replace(',','').strip() if len(r_row) > 4 else "0"
                         bill_amt = pd.to_numeric(raw_bill, errors='coerce')
-                        
-                        # 숫자가 아닌 값(NaN)은 0으로 처리
                         if pd.isna(bill_amt): bill_amt = 0.0
                         
                         rate = rate_dict.get(rec_biz_clean, 0.03)
-                        
-                        # 최종 계산 및 정수 변환 전 안전 체크
                         final_p = bill_amt * rate
-                        if pd.isna(final_p): final_p = 0.0
                         
                         results.append({
+                            "설치일(C)": install_date_raw,
                             "수납사명": r_row[1] if len(r_row) > 1 else "명칭없음",
                             "수납사업자번호": target_biz,
                             "추천자회사": ref_row[5],
                             "추천자사업자": rec_biz_raw,
-                            "위멤버스_제품": we_info['제품명'],
+                            "위멤버스_제품": we_product_name,
                             "위멤버스_비고": we_info['비고'],
                             "적립율": rate,
                             "청구금액(E)": int(bill_amt),
@@ -206,16 +211,16 @@ elif menu == "2. 포인트 지급 대상 조회":
 
                 final_df = pd.DataFrame(results)
                 if not final_df.empty:
-                    st.success(f"분석 완료: 총 {len(final_df)}건")
+                    st.success(f"분석 완료: 총 {len(final_df)}건 (설치일/제품 필터 적용됨)")
                     st.dataframe(final_df, use_container_width=True)
                     
                     st.divider()
                     st.subheader("📋 추천자별 합계 보고서")
                     summary = final_df.groupby(["추천자회사", "추천자사업자", "위멤버스_비고"])["최종지급포인트"].sum().reset_index()
                     st.dataframe(summary, use_container_width=True)
-                    st.download_button("📥 산출 내역 다운로드 (CSV)", final_df.to_csv(index=False).encode('utf-8-sig'), "point_report.csv")
+                    st.download_button("📥 산출 내역 다운로드", final_df.to_csv(index=False).encode('utf-8-sig'), "point_calc_result.csv")
                 else:
-                    st.info("조건에 일치하는 매칭 데이터가 없습니다.")
+                    st.info("조건을 충족하는 매칭 데이터가 없습니다. (2026년 설치분 및 베이직 제품은 제외되었습니다.)")
             except Exception as e:
                 st.error(f"데이터 계산 중 오류 발생: {e}")
 
@@ -225,21 +230,17 @@ elif menu == "2. 포인트 지급 대상 조회":
 elif menu == "3. 상품권 지급 대상 조회":
     st.header("🎟️ 상품권 지급 대상 (1회차 수납)")
     if doc:
-        with st.spinner("1회차 수납 데이터 조회 중..."):
+        with st.spinner("대상 조회 중..."):
             try:
                 r_values = doc.worksheet("경리나라 수납").get_all_values()
-                if not r_values: 
-                    st.info("수납 데이터가 없습니다.")
-                    st.stop()
-                
+                if not r_values: st.stop()
                 r_df = pd.DataFrame(r_values).fillna("")
-                # AL열(인덱스 37)이 입금횟수라고 가정하여 필터링
+                # 정상입금횟수열(AL=인덱스 37) 기준 1회차 필터링
                 if r_df.shape[1] > 37:
                     r_df[37] = pd.to_numeric(r_df[37], errors='coerce')
                     gift_targets = r_df[r_df[37] == 1].copy()
-                    st.write("입금 횟수가 1회인 대상자 목록입니다.")
                     st.dataframe(gift_targets, use_container_width=True)
                 else:
-                    st.warning("수납 데이터의 열 개수가 부족하여 회차 정보를 확인할 수 없습니다.")
+                    st.warning("정상입금횟수 정보를 찾을 수 없습니다.")
             except Exception as e:
                 st.error(f"조회 중 오류 발생: {e}")
