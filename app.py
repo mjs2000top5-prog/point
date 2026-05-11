@@ -85,18 +85,21 @@ if menu == "1. 데이터 업로드 및 관리":
     if doc is None: st.stop()
 
     # 1-1. 경리나라 수납 데이터
-    st.subheader("1. 경리나라 수납 데이터 업로드 (G,I,E,W,X,AA,AL,AM 열 제외)")
+    st.subheader("1. 경리나라 수납 데이터 업로드 (C, E, G, I, W, X, AA, AL, AM 열 추출)")
     if st.button("🗑️ 기존 수납 데이터 삭제", key="clear_r"):
         clear_google_sheet(doc, "경리나라 수납")
     
     receipt_file = st.file_uploader("수납 파일 업로드 (xlsx, csv)", type=['xlsx', 'xls', 'csv'], key="u1")
     if receipt_file:
-        df_receipt = load_file_generic(receipt_file, skip_rows=1)
-        if not df_receipt.empty:
-            # 사업자번호 하이픈 제거
-            df_receipt.iloc[:, 0] = df_receipt.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
-            
-            # 텍스트 클리닝 (신규, 부산, 외 N명 등 패턴 제거)
+        df_receipt_raw = load_file_generic(receipt_file, skip_rows=1)
+        if not df_receipt_raw.empty:
+            # 1. 특정 열 추출 (C 추가됨)
+            target_cols = ['C', 'E', 'G', 'I', 'W', 'X', 'AA', 'AL', 'AM']
+            target_indices = [col2idx(c) for c in target_cols]
+            available_indices = [i for i in target_indices if i < df_receipt_raw.shape[1]]
+            df_receipt = df_receipt_raw.iloc[:, available_indices].copy()
+
+            # 2. 텍스트 클리닝 (신규, 부산, 외 N명 등 패턴 제거)
             def clean_text_patterns(val):
                 if not isinstance(val, str): return val
                 patterns = [r'\(신규\)', r'\(부산\)', r'외\s?\d+명', r'\(new\)', r'\(Busan\)', r'plus\s?\d+\s?people']
@@ -104,20 +107,19 @@ if menu == "1. 데이터 업로드 및 관리":
                     val = re.sub(p, '', val)
                 return val.strip()
             
-            df_receipt = df_receipt.applymap(clean_text_patterns)
+            df_receipt = df_receipt.map(clean_text_patterns)
 
-            # 특정 열 제외 로직 (G, I, E, W, X, AA, AL, AM)
-            exclude_cols = ['G', 'I', 'E', 'W', 'X', 'AA', 'AL', 'AM']
-            exclude_indices = [col2idx(c) for c in exclude_cols]
-            cols_to_keep = [i for i in range(df_receipt.shape[1]) if i not in exclude_indices]
-            df_receipt_final = df_receipt.iloc[:, cols_to_keep].copy()
+            # 3. 추출된 데이터 중 세 번째 열(원본 G열) 하이픈 제거
+            # C, E, G 순서이므로 인덱스 2가 원본 G열(사업자번호)입니다.
+            if df_receipt.shape[1] > 2:
+                df_receipt.iloc[:, 2] = df_receipt.iloc[:, 2].astype(str).str.replace('-', '', regex=False)
 
-            st.write(f"📊 {len(exclude_cols)}개 열을 제외한 데이터 미리보기:")
-            st.dataframe(df_receipt_final.head(3))
+            st.write(f"📊 {len(available_indices)}개 열 추출 및 가공 완료 (미리보기):")
+            st.dataframe(df_receipt.head(3))
             
             if st.button("경리나라 수납 시트 반영"):
-                overwrite_google_sheet(doc, "경리나라 수납", df_receipt_final)
-                st.success("지정한 열을 제외하고 반영을 완료했습니다.")
+                overwrite_google_sheet(doc, "경리나라 수납", df_receipt)
+                st.success("지정한 열을 추출하여 반영을 완료했습니다.")
 
     st.divider()
 
@@ -147,7 +149,8 @@ if menu == "1. 데이터 업로드 및 관리":
         df_we_raw = load_file_generic(we_file, skip_rows=0)
         if not df_we_raw.empty:
             try:
-                df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
+                if df_we_raw.shape[1] > 3:
+                    df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
                 target_cols = [3, 6, 68]
                 available_cols = [i for i in target_cols if i < df_we_raw.shape[1]]
                 df_we_final = df_we_raw.iloc[:, available_cols].copy()
@@ -193,14 +196,13 @@ def get_processed_data(doc, filter_count_one=False):
         results = []
         for _, ref_row in ref_df.iterrows():
             target_biz = str(ref_row[0]).replace('-', '').strip()
-            matched_rows = r_df[r_df[0] == target_biz]
+            # 업로드 시트의 인덱스 기준: 0:C, 1:E, 2:G, 3:I, 4:W, 5:X, 6:AA, 7:AL, 8:AM
+            # 원본 G열(사업자번호)은 추출 후 인덱스 2입니다.
+            matched_rows = r_df[r_df[2] == target_biz]
             
             for _, r_row in matched_rows.iterrows():
-                # 열 제외로 인해 인덱스가 변동되었을 수 있으므로 주의가 필요합니다.
-                # 아래 예시는 기존 구조를 유지하되 데이터가 존재하는지 확인하며 계산합니다.
-                
-                # 수납횟수 체크 (기존 위치에 따라 조정 필요)
-                raw_count = str(r_row[6]).strip() if len(r_row) > 6 else "0"
+                # 수납횟수: 원본 AL열은 추출 후 인덱스 7
+                raw_count = str(r_row[7]).strip() if len(r_row) > 7 else "0"
                 pay_count = pd.to_numeric(raw_count, errors='coerce')
                 if pd.isna(pay_count): continue
                 if filter_count_one:
@@ -208,19 +210,21 @@ def get_processed_data(doc, filter_count_one=False):
                 else:
                     if pay_count <= 0 or pay_count >= 60: continue
 
-                # 청구금액 체크 (E열이 제외되었으므로 다른 열 인덱스 확인 필요)
-                # 만약 청구금액이 여전히 계산에 필요하다면 제외 대상에서 제외하거나 인덱스를 재지정해야 합니다.
-                raw_bill = str(r_row[4]).replace(',','').strip() if len(r_row) > 4 else "0"
+                # 청구금액: 원본 E열은 추출 후 인덱스 1
+                raw_bill = str(r_row[1]).replace(',','').strip() if len(r_row) > 1 else "0"
                 bill_amt = pd.to_numeric(raw_bill, errors='coerce')
                 if pd.isna(bill_amt) or bill_amt < 40000: continue
 
-                install_date_raw = str(r_row[2]) if len(r_row) > 2 else ""
+                # 설치일: 원본 C열은 추출 후 인덱스 0
+                install_date_raw = str(r_row[0]) if len(r_row) > 0 else ""
                 install_clean = ''.join(filter(str.isdigit, install_date_raw))
                 if install_clean and len(install_clean) >= 8 and int(install_clean[:8]) >= 20260101: continue
                 
+                # 추천 기한 필터링
                 rec_date = str(ref_row[4])
                 if ''.join(filter(str.isdigit, rec_date)) > "20251231": continue
 
+                # 제품명 필터링
                 rec_biz_raw = str(ref_row[6])
                 rec_biz_clean = rec_biz_raw.replace('-', '').strip()
                 we_info = we_dict.get(rec_biz_clean, {'제품명': '', '비고': ''})
@@ -231,16 +235,16 @@ def get_processed_data(doc, filter_count_one=False):
                 final_p = bill_amt * rate
                 
                 results.append({
-                    "설치일": install_date_raw,
-                    "수납횟수": int(pay_count),
-                    "수납사명": r_row[1] if len(r_row) > 1 else "",
+                    "설치일(C)": install_date_raw,
+                    "수납횟수(AL)": int(pay_count),
+                    "수납사명": r_row[3] if len(r_row) > 3 else "", # 원본 I열
                     "수납사업자번호": target_biz,
                     "추천자회사": ref_row[5],
                     "추천자사업자": rec_biz_raw,
                     "위멤버스_제품": we_product_name,
                     "위멤버스_비고": we_info['비고'],
                     "적립율": rate,
-                    "청구금액": int(bill_amt),
+                    "청구금액(E)": int(bill_amt),
                     "최종지급포인트": int(final_p)
                 })
         return pd.DataFrame(results)
