@@ -79,15 +79,23 @@ if menu == "1. 데이터 업로드 및 관리":
     if st.button("🗑️ 기존 수납 데이터 삭제", key="clear_r"):
         clear_google_sheet(doc, "경리나라 수납")
     
-    receipt_file = st.file_uploader("수납 파일 업로드 (xlsx, csv)", type=['xlsx', 'xls', 'csv'], key="u1")
+receipt_file = st.file_uploader("수납 파일 업로드 (첫 행 제외)", type=['xlsx', 'xls', 'csv'], key="u1")
     if receipt_file:
-        df_receipt = load_file_generic(receipt_file, skip_rows=1)
-        if not df_receipt.empty:
-            df_receipt.iloc[:, 0] = df_receipt.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
-            st.dataframe(df_receipt.head(3))
-            if st.button("경리나라 수납 시트 반영"):
-                overwrite_google_sheet(doc, "경리나라 수납", df_receipt)
-                st.success("반영 완료")
+        df_raw = load_file_generic(receipt_file, skip_rows=1)
+        # E열(청구금액)을 명확하게 포함하여 추출
+        t_cols = ['G', 'I', 'E', 'W', 'X', 'AA', 'AL', 'AM']
+        t_idxs = [col2idx(c) for c in t_cols]
+        df_final = df_raw.iloc[:, [i for i in t_idxs if i < df_raw.shape[1]]].copy()
+        
+        # 하이픈 제거
+        if df_final.shape[1] > 0:
+            df_final.iloc[:, 0] = df_final.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
+        
+        st.write("📊 추출 데이터 미리보기 (청구금액 E열이 정상적으로 들어왔는지 확인)")
+        st.dataframe(df_final.head(5))
+        if st.button("경리나라 수납 시트 반영"):
+            overwrite_google_sheet(doc, "경리나라 수납", df_final)
+            st.success("구글 시트 반영 완료")
 
     st.divider()
 
