@@ -124,10 +124,10 @@ if menu == "1. 데이터 업로드 및 관리":
                 df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
                 
                 # 2. 필요한 열 선택: D(3), G(6), BR(68) 
-                # *열 번호를 인덱스로 변환: D=3, G=6, BQ=68 (A=0 기준)
+                # *열 번호를 인덱스로 변환: D=3, G=6, BR=68 (A=0 기준)
                 target_cols = [3, 6, 68]
                 
-                # 실제 파일의 열 개수가 BQ(68)보다 적을 경우를 대비해 필터링
+                # 실제 파일의 열 개수가 BR(68)보다 적을 경우를 대비해 필터링
                 available_cols = [i for i in target_cols if i < df_we_raw.shape[1]]
                 df_we_final = df_we_raw.iloc[:, available_cols].copy()
                 
