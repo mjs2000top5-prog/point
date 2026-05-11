@@ -123,7 +123,7 @@ if menu == "1. 데이터 업로드 및 관리":
                 # 만약 원본 D열 자체를 수정하고 싶다면 df_we_raw.iloc[:, 3]를 수정
                 df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
                 
-                # 2. 필요한 열 선택: D(3), G(6), BQ(68) 
+                # 2. 필요한 열 선택: D(3), G(6), BR(68) 
                 # *열 번호를 인덱스로 변환: D=3, G=6, BQ=68 (A=0 기준)
                 target_cols = [3, 6, 68]
                 
@@ -131,12 +131,12 @@ if menu == "1. 데이터 업로드 및 관리":
                 available_cols = [i for i in target_cols if i < df_we_raw.shape[1]]
                 df_we_final = df_we_raw.iloc[:, available_cols].copy()
                 
-                st.write("업로드 예정 데이터 미리보기 (D, G, BQ열):")
+                st.write("업로드 예정 데이터 미리보기 (D, G, BR열):")
                 st.dataframe(df_we_final.head(3))
                 
                 if st.button("위멤버스 시트 반영"):
                     overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
-                    st.success("D열 하이픈 제거 및 G, BQ열 추출하여 반영 완료")
+                    st.success("D열 하이픈 제거 및 G, BR열 추출하여 반영 완료")
             except Exception as e:
                 st.error(f"위멤버스 데이터 가공 중 오류 발생: {e}")
 # ==========================================
