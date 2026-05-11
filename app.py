@@ -108,7 +108,7 @@ if menu == "1. 데이터 업로드 및 관리":
     st.divider()
 
   # 1-3. 위멤버스 가입 여부 업로드 로직 (수정본)
-    st.subheader("3. 위멤버스 가입 여부 업로드 (D열 하이픈 제거, G/BQ열 추출)")
+    st.subheader("3. 위멤버스 가입 여부 업로드 (D열 하이픈 제거, G/BR열 추출)")
     if st.button("🗑️ 기존 위멤버스 데이터 삭제", key="clear_we"):
         clear_google_sheet(doc, "위멤버스 가입 여부")
     
