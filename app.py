@@ -21,7 +21,7 @@ def load_file_generic(file, skip_rows=0):
         return pd.read_csv(file, header=None, dtype=str, skiprows=skip_rows)
     
     try:
-        # 1. 먼저 최신 엑셀 포맷(.xlsx) 엔진으로 시도
+        # 1. 최신 엑셀 포맷(.xlsx) 엔진으로 시도
         return pd.read_excel(file, header=None, dtype=str, skiprows=skip_rows, engine='openpyxl')
     except Exception:
         try:
@@ -29,8 +29,12 @@ def load_file_generic(file, skip_rows=0):
             file.seek(0) # 파일 읽기 포인터 초기화
             return pd.read_excel(file, header=None, dtype=str, skiprows=skip_rows, engine='xlrd')
         except Exception as e:
-            # 3. 둘 다 실패하면 에러를 던져 웹 화면에 표시
-            raise ValueError(f"엑셀 포맷 분석 실패. 파일 형식을 'Excel 통합 문서(.xlsx)'로 다시 저장해주세요. (상세: {e})")
+            # 3. 라이브러리 미설치나 포맷 손상 시 안내문 출력
+            raise ValueError(
+                "엑셀 포맷 분석에 실패했습니다. 파일이 구형(.xls)이거나 손상되었을 수 있습니다. "
+                "가장 확실한 해결을 위해 엑셀 프로그램에서 [다른 이름으로 저장]을 눌러 "
+                "'Excel 통합 문서(.xlsx)' 형식으로 새로 저장한 후 업로드해 주세요."
+            )
 
 # ==========================================
 # 1. 기본 설정 및 구글 API 연동 (Secrets 적용)
@@ -121,7 +125,7 @@ if menu == "1. 데이터 업로드 및 관리":
                     overwrite_google_sheet(doc, "경리나라 수납", df_receipt)
                     st.success("지정한 순서로 데이터 반영을 완료했습니다.")
         except Exception as e:
-            st.error(f"수납 파일 읽기 오류: {e}")
+            st.error(f"수납 파일 처리 중 오류 발생: {e}")
 
     st.divider()
 
@@ -140,7 +144,7 @@ if menu == "1. 데이터 업로드 및 관리":
                     append_to_google_sheet(doc, "추천", df_ref_final)
                     st.success("추천 데이터 누적 완료")
         except Exception as e:
-            st.error(f"추천 파일 읽기 오류: {e}")
+            st.error(f"추천 파일 처리 중 오류 발생: {e}")
 
     st.divider()
 
@@ -164,7 +168,7 @@ if menu == "1. 데이터 업로드 및 관리":
                     overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
                     st.success("위멤버스 데이터 반영 완료")
         except Exception as e:
-            st.error(f"위멤버스 파일 읽기 오류: {e}")
+            st.error(f"위멤버스 파일 처리 중 오류 발생: {e}")
 
 # ==========================================
 # 데이터 처리 로직 (포인트 및 상품권 산출용)
