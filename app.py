@@ -231,7 +231,7 @@ def get_processed_data(doc, filter_count_one=False):
                 
                 results.append({
                     "설치일(C)": install_date_raw,
-                    "수납횟수(AL)": int(pay_count),
+                    "수납횟수(G)": int(pay_count),
                     "수납사명": r_row[1], 
                     "수납사업자번호": target_biz,
                     "추천자회사": ref_row[5],
