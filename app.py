@@ -74,20 +74,45 @@ if menu == "1. 데이터 업로드 및 관리":
     st.header("📂 데이터 업로드 및 관리")
     if doc is None: st.stop()
 
-    # 1-1. 경리나라 수납 데이터
-    st.subheader("1. 경리나라 수납 데이터 업로드 (첫 행 제외)")
+   # 1-1. 경리나라 수납 데이터
+    st.subheader("1. 경리나라 수납 데이터 업로드 (순서: G, I, W, X, AA, AL, AM + 계산용 C, E)")
     if st.button("🗑️ 기존 수납 데이터 삭제", key="clear_r"):
-        clear_google_sheet(doc, "경리나라 수납")
+        worksheet = doc.worksheet("경리나라 수납")
+        worksheet.clear()
+        st.success("수납 데이터 삭제 완료")
     
     receipt_file = st.file_uploader("수납 파일 업로드 (xlsx, csv)", type=['xlsx', 'xls', 'csv'], key="u1")
     if receipt_file:
-        df_receipt = load_file_generic(receipt_file, skip_rows=1)
-        if not df_receipt.empty:
+        df_raw = load_file_generic(receipt_file, skip_rows=1)
+        if not df_raw.empty:
+            # 요청하신 순서대로 열 인덱스 정의
+            # G(6), I(8), W(22), X(23), AA(26), AL(37), AM(38) + 계산필요 C(2), E(4)
+            target_cols = ['G', 'I', 'W', 'X', 'AA', 'AL', 'AM', 'C', 'E']
+            target_indices = [col2idx(c) for c in target_cols]
+            
+            # 파일 내 존재하는 열만 필터링하여 추출
+            available_indices = [i for i in target_indices if i < df_raw.shape[1]]
+            df_receipt = df_raw.iloc[:, available_indices].copy()
+
+            # 텍스트 클리닝 (신규, 부산 등 패턴 제거)
+            def clean_text_patterns(val):
+                if not isinstance(val, str): return val
+                patterns = [r'\(신규\)', r'\(부산\)', r'외\s?\d+명', r'\(new\)', r'\(Busan\)', r'plus\s?\d+\s?people']
+                for p in patterns:
+                    val = re.sub(p, '', val)
+                return val.strip()
+            
+            df_receipt = df_receipt.map(clean_text_patterns)
+
+            # 사업자번호(첫 번째 열인 G열) 하이픈 제거
             df_receipt.iloc[:, 0] = df_receipt.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
+
+            st.write("📊 업로드 데이터 미리보기 (G, I, W, X, AA, AL, AM, C, E 순서):")
             st.dataframe(df_receipt.head(3))
+            
             if st.button("경리나라 수납 시트 반영"):
                 overwrite_google_sheet(doc, "경리나라 수납", df_receipt)
-                st.success("반영 완료")
+                st.success("지정한 순서로 데이터 반영을 완료했습니다.")
 
     st.divider()
 
