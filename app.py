@@ -2,9 +2,29 @@ import streamlit as st
 import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
+import re
 
 # ==========================================
-# 0. 기본 설정 및 구글 API 연동 (Secrets 적용)
+# 0. 기본 유틸리티 함수 (가장 먼저 정의)
+# ==========================================
+def col2idx(col_str):
+    """엑셀 열 문자를 인덱스 숫자로 변환 (A->0, E->4 등)"""
+    expn = 0
+    col_num = 0
+    for char in reversed(col_str.upper()):
+        col_num += (ord(char) - ord('A') + 1) * (26 ** expn)
+        expn += 1
+    return col_num - 1
+
+def load_file_generic(file, skip_rows=0):
+    if file.name.endswith('.csv'):
+        df = pd.read_csv(file, header=None, dtype=str, skiprows=skip_rows)
+    else:
+        df = pd.read_excel(file, header=None, dtype=str, skiprows=skip_rows)
+    return df
+
+# ==========================================
+# 1. 기본 설정 및 구글 API 연동 (Secrets 적용)
 # ==========================================
 st.set_page_config(page_title="포인트 및 상품권 지급 관리", layout="wide")
 
@@ -24,15 +44,6 @@ def authenticate_gspread():
         return None
 
 # 시트 관리 공통 함수
-def clear_google_sheet(doc, sheet_name):
-    try:
-        worksheet = doc.worksheet(sheet_name)
-        worksheet.clear()
-        return True
-    except Exception as e:
-        st.error(f"'{sheet_name}' 시트 삭제 오류: {e}")
-        return False
-
 def overwrite_google_sheet(doc, sheet_name, df):
     try:
         worksheet = doc.worksheet(sheet_name)
@@ -55,26 +66,19 @@ def append_to_google_sheet(doc, sheet_name, df):
         st.error(f"'{sheet_name}' 누적 오류: {e}")
         return False
 
-def load_file_generic(file, skip_rows=0):
-    if file.name.endswith('.csv'):
-        df = pd.read_csv(file, header=None, dtype=str, skiprows=skip_rows)
-    else:
-        df = pd.read_excel(file, header=None, dtype=str, skiprows=skip_rows)
-    return df
-
 st.title("🎁 포인트 및 상품권 지급 관리 시스템")
 
 menu = st.sidebar.radio("메뉴 선택", ["1. 데이터 업로드 및 관리", "2. 포인트 지급 대상 조회", "3. 상품권 지급 대상 조회"])
 doc = authenticate_gspread()
 
 # ==========================================
-# 1. 데이터 업로드 및 관리 페이지
+# 2. 데이터 업로드 및 관리 페이지
 # ==========================================
 if menu == "1. 데이터 업로드 및 관리":
     st.header("📂 데이터 업로드 및 관리")
     if doc is None: st.stop()
 
-   # 1-1. 경리나라 수납 데이터
+    # 1-1. 경리나라 수납 데이터
     st.subheader("1. 경리나라 수납 데이터 업로드 (순서: G, I, W, X, AA, AL, AM + 계산용 C, E)")
     if st.button("🗑️ 기존 수납 데이터 삭제", key="clear_r"):
         worksheet = doc.worksheet("경리나라 수납")
@@ -86,7 +90,6 @@ if menu == "1. 데이터 업로드 및 관리":
         df_raw = load_file_generic(receipt_file, skip_rows=1)
         if not df_raw.empty:
             # 요청하신 순서대로 열 인덱스 정의
-            # G(6), I(8), W(22), X(23), AA(26), AL(37), AM(38) + 계산필요 C(2), E(4)
             target_cols = ['G', 'I', 'W', 'X', 'AA', 'AL', 'AM', 'C', 'E']
             target_indices = [col2idx(c) for c in target_cols]
             
@@ -116,7 +119,7 @@ if menu == "1. 데이터 업로드 및 관리":
 
     st.divider()
 
-# 1-2. 추천 데이터
+    # 1-2. 추천 데이터
     st.subheader("2. 추천 데이터 업로드 (3행 제외)")
     referral_file = st.file_uploader("추천 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u2")
     if referral_file:
@@ -132,40 +135,27 @@ if menu == "1. 데이터 업로드 및 관리":
 
     st.divider()
 
-  # 1-3. 위멤버스 가입 여부 업로드 로직 (수정본)
-    st.subheader("3. 위멤버스 가입 여부 업로드 (D열 하이픈 제거, G/BR열 추출)")
+    # 1-3. 위멤버스 가입 여부
+    st.subheader("3. 위멤버스 가입 여부 업로드")
     if st.button("🗑️ 기존 위멤버스 데이터 삭제", key="clear_we"):
-        clear_google_sheet(doc, "위멤버스 가입 여부")
+        worksheet = doc.worksheet("위멤버스 가입 여부")
+        worksheet.clear()
+        st.success("위멤버스 데이터 삭제 완료")
     
     we_file = st.file_uploader("위멤버스 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u3")
     if we_file:
-        # 데이터 로드 (헤더 포함 여부에 따라 skip_rows 조정 가능, 여기선 0으로 설정)
         df_we_raw = load_file_generic(we_file, skip_rows=0)
-        
         if not df_we_raw.empty:
-            try:
-                # 1. D열(인덱스 3)의 하이픈 제거 후 A열(인덱스 0)로 복사 (매칭용)
-                # 만약 원본 D열 자체를 수정하고 싶다면 df_we_raw.iloc[:, 3]를 수정
-                df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
-                
-                # 2. 필요한 열 선택: D(3), G(6), BR(69) 
-                # *열 번호를 인덱스로 변환: D=3, G=6, BR=69 (A=0 기준)
-                target_cols = [3, 6, 69]
-                
-                # 실제 파일의 열 개수가 BR(69)보다 적을 경우를 대비해 필터링
-                available_cols = [i for i in target_cols if i < df_we_raw.shape[1]]
-                df_we_final = df_we_raw.iloc[:, available_cols].copy()
-                
-                st.write("업로드 예정 데이터 미리보기 (D, G, BR열):")
-                st.dataframe(df_we_final.head(3))
-                
-                if st.button("위멤버스 시트 반영"):
-                    overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
-                    st.success("D열 하이픈 제거 및 G, BR열 추출하여 반영 완료")
-            except Exception as e:
-                st.error(f"위멤버스 데이터 가공 중 오류 발생: {e}")
+            df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
+            target_cols = [3, 6, 68]
+            df_we_final = df_we_raw.iloc[:, [i for i in target_cols if i < df_we_raw.shape[1]]].copy()
+            st.dataframe(df_we_final.head(3))
+            if st.button("위멤버스 시트 반영"):
+                overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
+                st.success("위멤버스 데이터 반영 완료")
+
 # ==========================================
-# 데이터 처리 공통 로직 함수 (포인트/상품권 공용)
+# 데이터 처리 로직 (변경된 열 순서 반영)
 # ==========================================
 def get_processed_data(doc, filter_count_one=False):
     try:
@@ -179,7 +169,7 @@ def get_processed_data(doc, filter_count_one=False):
         r_df = pd.DataFrame(r_values).fillna("")
         ref_df = pd.DataFrame(ref_values).fillna("")
         
-        # 적립율 사전 (오류 방지)
+        # 적립율/위멤버스 매핑 데이터 준비 및 텍스트 데이터 예외 처리
         rate_dict = {}
         for row in rate_values:
             if len(row) >= 2:
@@ -187,19 +177,22 @@ def get_processed_data(doc, filter_count_one=False):
                 try:
                     val = float(str(row[1]).replace('%','').strip())
                     rate_dict[biz] = val/100 if val > 1 else val
-                except: continue
-        
-        # 위멤버스 사전
-        we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2]} for row in we_values if len(row) >= 3}
+                except ValueError:
+                    continue
+                    
+        we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2] if len(row)>2 else ''} for row in we_values if len(row) > 0}
 
         results = []
         for _, ref_row in ref_df.iterrows():
             target_biz = str(ref_row[0]).replace('-', '').strip()
+            # 시트의 0번 인덱스가 G열(사업자번호)
             matched_rows = r_df[r_df[0] == target_biz]
             
             for _, r_row in matched_rows.iterrows():
-                # [필터] 수납횟수(G열)
-                raw_count = str(r_row[6]).strip() if len(r_row) > 6 else "0"
+                # 인덱스 구조: 0:G, 1:I, 2:W, 3:X, 4:AA, 5:AL, 6:AM, 7:C, 8:E
+                
+                # 수납횟수 (AL열 -> 인덱스 5) - 헤더가 섞여 있어도 튕기지 않게 텍스트 예외 처리
+                raw_count = str(r_row[5]).strip()
                 pay_count = pd.to_numeric(raw_count, errors='coerce')
                 if pd.isna(pay_count): continue
                 if filter_count_one:
@@ -207,37 +200,36 @@ def get_processed_data(doc, filter_count_one=False):
                 else:
                     if pay_count <= 0 or pay_count >= 60: continue
 
-                # [필터] 청구금액(E열) 4만 원 이상
-                raw_bill = str(r_row[4]).replace(',','').strip() if len(r_row) > 4 else "0"
+                # 청구금액 (E열 -> 인덱스 8) - 헤더가 섞여 있어도 튕기지 않게 텍스트 예외 처리
+                raw_bill = str(r_row[8]).replace(',','').strip()
                 bill_amt = pd.to_numeric(raw_bill, errors='coerce')
                 if pd.isna(bill_amt) or bill_amt < 40000: continue
 
-                # [필터] 설치일/추천기한/제품명(베이직 제외) 등
-                install_date_raw = str(r_row[2]) if len(r_row) > 2 else ""
+                # 설치일 (C열 -> 인덱스 7)
+                install_date_raw = str(r_row[7])
                 install_clean = ''.join(filter(str.isdigit, install_date_raw))
                 if install_clean and len(install_clean) >= 8 and int(install_clean[:8]) >= 20260101: continue
                 
+                # 추천일자 필터링
                 rec_date = str(ref_row[4])
                 if ''.join(filter(str.isdigit, rec_date)) > "20251231": continue
 
                 rec_biz_raw = str(ref_row[6])
                 rec_biz_clean = rec_biz_raw.replace('-', '').strip()
                 we_info = we_dict.get(rec_biz_clean, {'제품명': '', '비고': ''})
-                we_product_name = str(we_info['제품명']).strip()
-                if not we_product_name or "위멤버스 베이직" in we_product_name: continue
+                if not we_info['제품명'] or "위멤버스 베이직" in str(we_info['제품명']): continue
 
                 rate = rate_dict.get(rec_biz_clean, 0.03)
                 final_p = bill_amt * rate
                 
                 results.append({
                     "설치일(C)": install_date_raw,
-                    "수납횟수(G)": int(pay_count),
-                    "수납사명": r_row[1],
+                    "수납횟수(AL)": int(pay_count),
+                    "수납사명": r_row[1], # I열
                     "수납사업자번호": target_biz,
                     "추천자회사": ref_row[5],
                     "추천자사업자": rec_biz_raw,
-                    "위멤버스_제품": we_product_name,
-                    "위멤버스_비고": we_info['비고'],
+                    "위멤버스_제품": we_info['제품명'],
                     "적립율": rate,
                     "청구금액(E)": int(bill_amt),
                     "최종지급포인트": int(final_p)
@@ -248,32 +240,33 @@ def get_processed_data(doc, filter_count_one=False):
         return pd.DataFrame()
 
 # ==========================================
-# 2. 포인트 지급 대상 조회
+# 3. 메뉴별 화면 표시 로직
 # ==========================================
 if menu == "2. 포인트 지급 대상 조회":
     st.header("🎯 포인트 지급 내역 산출")
     if doc:
-        final_df = get_processed_data(doc, filter_count_one=False)
-        if not final_df.empty:
-            st.dataframe(final_df, use_container_width=True)
-            st.download_button("📥 상세 내역 다운로드", final_df.to_csv(index=False).encode('utf-8-sig'), "point_detail.csv")
-            
-            summary = final_df.groupby(["추천자회사", "추천자사업자", "위멤버스_비고"])["최종지급포인트"].sum().reset_index()
-            st.subheader("📋 추천자별 합계 보고서")
-            st.dataframe(summary, use_container_width=True)
-            st.download_button("📥 합계 보고서 다운로드", summary.to_csv(index=False).encode('utf-8-sig'), "point_summary.csv")
-        else:
-            st.info("조건을 충족하는 데이터가 없습니다.")
+        with st.spinner("데이터 매칭 및 산출 중..."):
+            final_df = get_processed_data(doc, filter_count_one=False)
+            if not final_df.empty:
+                st.dataframe(final_df, use_container_width=True)
+                st.download_button("📥 상세 내역 다운로드 (CSV)", final_df.to_csv(index=False).encode('utf-8-sig'), "point_detail.csv")
+                
+                st.divider()
+                st.subheader("📋 추천자별 합계 보고서")
+                summary = final_df.groupby(["추천자회사", "추천자사업자"])["최종지급포인트"].sum().reset_index()
+                st.dataframe(summary, use_container_width=True)
+                st.download_button("📥 합계 보고서 다운로드 (CSV)", summary.to_csv(index=False).encode('utf-8-sig'), "point_summary.csv")
+            else: 
+                st.info("대상 데이터가 없습니다.")
 
-# ==========================================
-# 3. 상품권 지급 대상 조회
-# ==========================================
 elif menu == "3. 상품권 지급 대상 조회":
     st.header("🎟️ 상품권 지급 대상 (수납 1회)")
     if doc:
-        gift_df = get_processed_data(doc, filter_count_one=True)
-        if not gift_df.empty:
-            st.dataframe(gift_df, use_container_width=True)
-            st.download_button("📥 상품권 지급 대상 다운로드", gift_df.to_csv(index=False).encode('utf-8-sig'), "gift_card.csv")
-        else:
-            st.info("대상자가 없습니다.")
+        with st.spinner("대상자 필터링 중..."):
+            gift_df = get_processed_data(doc, filter_count_one=True)
+            if not gift_df.empty:
+                st.success(f"상품권 지급 대상: 총 {len(gift_df)}건")
+                st.dataframe(gift_df, use_container_width=True)
+                st.download_button("📥 상품권 지급 대상 다운로드 (CSV)", gift_df.to_csv(index=False).encode('utf-8-sig'), "gift_card.csv")
+            else: 
+                st.info("대상 데이터가 없습니다.")
