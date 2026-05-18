@@ -1,5 +1,7 @@
+# requirements.txt 예시
 streamlit
 pandas
-openpyxl
 gspread
 oauth2client
+openpyxl
+xlrd
