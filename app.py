@@ -171,7 +171,7 @@ if menu == "1. 데이터 업로드 및 관리":
             st.error(f"위멤버스 파일 처리 중 오류 발생: {e}")
 
 # ==========================================
-# 데이터 처리 로직 (포인트 및 상품권 산출용)
+# 데이터 처리 공통 로직 함수 (포인트/상품권 공용)
 # ==========================================
 def get_processed_data(doc, filter_count_one=False):
     try:
@@ -185,6 +185,7 @@ def get_processed_data(doc, filter_count_one=False):
         r_df = pd.DataFrame(r_values).fillna("")
         ref_df = pd.DataFrame(ref_values).fillna("")
         
+        # 적립율 사전 (오류 방지)
         rate_dict = {}
         for row in rate_values:
             if len(row) >= 2:
@@ -192,9 +193,10 @@ def get_processed_data(doc, filter_count_one=False):
                 try:
                     val = float(str(row[1]).replace('%','').strip())
                     rate_dict[biz] = val/100 if val > 1 else val
-                except ValueError: continue
-                    
-        we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2] if len(row)>2 else ''} for row in we_values if len(row) > 0}
+                except: continue
+        
+        # 위멤버스 사전
+        we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2]} for row in we_values if len(row) >= 3}
 
         results = []
         for _, ref_row in ref_df.iterrows():
@@ -202,7 +204,8 @@ def get_processed_data(doc, filter_count_one=False):
             matched_rows = r_df[r_df[0] == target_biz]
             
             for _, r_row in matched_rows.iterrows():
-                raw_count = str(r_row[5]).strip()
+                # [필터] 수납횟수(G열)
+                raw_count = str(r_row[6]).strip() if len(r_row) > 6 else "0"
                 pay_count = pd.to_numeric(raw_count, errors='coerce')
                 if pd.isna(pay_count): continue
                 if filter_count_one:
@@ -210,11 +213,13 @@ def get_processed_data(doc, filter_count_one=False):
                 else:
                     if pay_count <= 0 or pay_count >= 60: continue
 
-                raw_bill = str(r_row[8]).replace(',','').strip()
+                # [필터] 청구금액(E열) 4만 원 이상
+                raw_bill = str(r_row[4]).replace(',','').strip() if len(r_row) > 4 else "0"
                 bill_amt = pd.to_numeric(raw_bill, errors='coerce')
                 if pd.isna(bill_amt) or bill_amt < 40000: continue
 
-                install_date_raw = str(r_row[7])
+                # [필터] 설치일/추천기한/제품명(베이직 제외) 등
+                install_date_raw = str(r_row[2]) if len(r_row) > 2 else ""
                 install_clean = ''.join(filter(str.isdigit, install_date_raw))
                 if install_clean and len(install_clean) >= 8 and int(install_clean[:8]) >= 20260101: continue
                 
@@ -224,7 +229,8 @@ def get_processed_data(doc, filter_count_one=False):
                 rec_biz_raw = str(ref_row[6])
                 rec_biz_clean = rec_biz_raw.replace('-', '').strip()
                 we_info = we_dict.get(rec_biz_clean, {'제품명': '', '비고': ''})
-                if not we_info['제품명'] or "위멤버스 베이직" in str(we_info['제품명']): continue
+                we_product_name = str(we_info['제품명']).strip()
+                if not we_product_name or "위멤버스 베이직" in we_product_name: continue
 
                 rate = rate_dict.get(rec_biz_clean, 0.03)
                 final_p = bill_amt * rate
@@ -232,11 +238,12 @@ def get_processed_data(doc, filter_count_one=False):
                 results.append({
                     "설치일(C)": install_date_raw,
                     "수납횟수(G)": int(pay_count),
-                    "수납사명": r_row[1], 
+                    "수납사명": r_row[1],
                     "수납사업자번호": target_biz,
                     "추천자회사": ref_row[5],
                     "추천자사업자": rec_biz_raw,
-                    "위멤버스_제품": we_info['제품명'],
+                    "위멤버스_제품": we_product_name,
+                    "위멤버스_비고": we_info['비고'],
                     "적립율": rate,
                     "청구금액(E)": int(bill_amt),
                     "최종지급포인트": int(final_p)
@@ -247,33 +254,32 @@ def get_processed_data(doc, filter_count_one=False):
         return pd.DataFrame()
 
 # ==========================================
-# 3. 메뉴별 화면 표시 로직
+# 2. 포인트 지급 대상 조회
 # ==========================================
 if menu == "2. 포인트 지급 대상 조회":
     st.header("🎯 포인트 지급 내역 산출")
     if doc:
-        with st.spinner("데이터 매칭 및 산출 중..."):
-            final_df = get_processed_data(doc, filter_count_one=False)
-            if not final_df.empty:
-                st.dataframe(final_df, use_container_width=True)
-                st.download_button("📥 상세 내역 다운로드 (CSV)", final_df.to_csv(index=False).encode('utf-8-sig'), "point_detail.csv")
-                
-                st.divider()
-                st.subheader("📋 추천자별 합계 보고서")
-                summary = final_df.groupby(["추천자회사", "추천자사업자"])["최종지급포인트"].sum().reset_index()
-                st.dataframe(summary, use_container_width=True)
-                st.download_button("📥 합계 보고서 다운로드 (CSV)", summary.to_csv(index=False).encode('utf-8-sig'), "point_summary.csv")
-            else: 
-                st.info("대상 데이터가 없습니다.")
+        final_df = get_processed_data(doc, filter_count_one=False)
+        if not final_df.empty:
+            st.dataframe(final_df, use_container_width=True)
+            st.download_button("📥 상세 내역 다운로드", final_df.to_csv(index=False).encode('utf-8-sig'), "point_detail.csv")
+            
+            summary = final_df.groupby(["추천자회사", "추천자사업자", "위멤버스_비고"])["최종지급포인트"].sum().reset_index()
+            st.subheader("📋 추천자별 합계 보고서")
+            st.dataframe(summary, use_container_width=True)
+            st.download_button("📥 합계 보고서 다운로드", summary.to_csv(index=False).encode('utf-8-sig'), "point_summary.csv")
+        else:
+            st.info("조건을 충족하는 데이터가 없습니다.")
 
+# ==========================================
+# 3. 상품권 지급 대상 조회
+# ==========================================
 elif menu == "3. 상품권 지급 대상 조회":
     st.header("🎟️ 상품권 지급 대상 (수납 1회)")
     if doc:
-        with st.spinner("대상자 필터링 중..."):
-            gift_df = get_processed_data(doc, filter_count_one=True)
-            if not gift_df.empty:
-                st.success(f"상품권 지급 대상: 총 {len(gift_df)}건")
-                st.dataframe(gift_df, use_container_width=True)
-                st.download_button("📥 상품권 지급 대상 다운로드 (CSV)", gift_df.to_csv(index=False).encode('utf-8-sig'), "gift_card.csv")
-            else: 
-                st.info("대상 데이터가 없습니다.")
+        gift_df = get_processed_data(doc, filter_count_one=True)
+        if not gift_df.empty:
+            st.dataframe(gift_df, use_container_width=True)
+            st.download_button("📥 상품권 지급 대상 다운로드", gift_df.to_csv(index=False).encode('utf-8-sig'), "gift_card.csv")
+        else:
+            st.info("대상자가 없습니다.")
