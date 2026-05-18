@@ -116,7 +116,7 @@ if menu == "1. 데이터 업로드 및 관리":
 
     st.divider()
 
-    # 1-2. 추천 데이터
+# 1-2. 추천 데이터
     st.subheader("2. 추천 데이터 업로드 (3행 제외)")
     referral_file = st.file_uploader("추천 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u2")
     if referral_file:
@@ -128,7 +128,7 @@ if menu == "1. 데이터 업로드 및 관리":
             st.dataframe(df_ref_final.head(3))
             if st.button("추천 데이터 누적 추가"):
                 append_to_google_sheet(doc, "추천", df_ref_final)
-                st.success("누적 완료")
+                st.success("추천 데이터 누적 완료")
 
     st.divider()
 
