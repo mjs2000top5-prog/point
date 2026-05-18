@@ -5,7 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import re
 
 # ==========================================
-# 0. 기본 유틸리티 함수 (가장 먼저 정의)
+# 0. 기본 유틸리티 함수 (엑셀 엔진 openpyxl 명시)
 # ==========================================
 def col2idx(col_str):
     """엑셀 열 문자를 인덱스 숫자로 변환 (A->0, E->4 등)"""
@@ -20,7 +20,8 @@ def load_file_generic(file, skip_rows=0):
     if file.name.endswith('.csv'):
         df = pd.read_csv(file, header=None, dtype=str, skiprows=skip_rows)
     else:
-        df = pd.read_excel(file, header=None, dtype=str, skiprows=skip_rows)
+        # 엔진을 openpyxl로 명시하여 버전 호환성 및 ValueError 방지
+        df = pd.read_excel(file, header=None, dtype=str, skiprows=skip_rows, engine='openpyxl')
     return df
 
 # ==========================================
@@ -87,35 +88,32 @@ if menu == "1. 데이터 업로드 및 관리":
     
     receipt_file = st.file_uploader("수납 파일 업로드 (xlsx, csv)", type=['xlsx', 'xls', 'csv'], key="u1")
     if receipt_file:
-        df_raw = load_file_generic(receipt_file, skip_rows=1)
-        if not df_raw.empty:
-            # 요청하신 순서대로 열 인덱스 정의
-            target_cols = ['G', 'I', 'W', 'X', 'AA', 'AL', 'AM', 'C', 'E']
-            target_indices = [col2idx(c) for c in target_cols]
-            
-            # 파일 내 존재하는 열만 필터링하여 추출
-            available_indices = [i for i in target_indices if i < df_raw.shape[1]]
-            df_receipt = df_raw.iloc[:, available_indices].copy()
+        try:
+            df_raw = load_file_generic(receipt_file, skip_rows=1)
+            if not df_raw.empty:
+                target_cols = ['G', 'I', 'W', 'X', 'AA', 'AL', 'AM', 'C', 'E']
+                target_indices = [col2idx(c) for c in target_cols]
+                available_indices = [i for i in target_indices if i < df_raw.shape[1]]
+                df_receipt = df_raw.iloc[:, available_indices].copy()
 
-            # 텍스트 클리닝 (신규, 부산 등 패턴 제거)
-            def clean_text_patterns(val):
-                if not isinstance(val, str): return val
-                patterns = [r'\(신규\)', r'\(부산\)', r'외\s?\d+명', r'\(new\)', r'\(Busan\)', r'plus\s?\d+\s?people']
-                for p in patterns:
-                    val = re.sub(p, '', val)
-                return val.strip()
-            
-            df_receipt = df_receipt.map(clean_text_patterns)
+                def clean_text_patterns(val):
+                    if not isinstance(val, str): return val
+                    patterns = [r'\(신규\)', r'\(부산\)', r'외\s?\d+명', r'\(new\)', r'\(Busan\)', r'plus\s?\d+\s?people']
+                    for p in patterns:
+                        val = re.sub(p, '', val)
+                    return val.strip()
+                
+                df_receipt = df_receipt.map(clean_text_patterns)
+                df_receipt.iloc[:, 0] = df_receipt.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
 
-            # 사업자번호(첫 번째 열인 G열) 하이픈 제거
-            df_receipt.iloc[:, 0] = df_receipt.iloc[:, 0].astype(str).str.replace('-', '', regex=False)
-
-            st.write("📊 업로드 데이터 미리보기 (G, I, W, X, AA, AL, AM, C, E 순서):")
-            st.dataframe(df_receipt.head(3))
-            
-            if st.button("경리나라 수납 시트 반영"):
-                overwrite_google_sheet(doc, "경리나라 수납", df_receipt)
-                st.success("지정한 순서로 데이터 반영을 완료했습니다.")
+                st.write("📊 업로드 데이터 미리보기 (G, I, W, X, AA, AL, AM, C, E 순서):")
+                st.dataframe(df_receipt.head(3))
+                
+                if st.button("경리나라 수납 시트 반영"):
+                    overwrite_google_sheet(doc, "경리나라 수납", df_receipt)
+                    st.success("지정한 순서로 데이터 반영을 완료했습니다.")
+        except Exception as e:
+            st.error(f"수납 파일 읽기 오류: {e}. 파일 확장자와 형식을 확인해주세요.")
 
     st.divider()
 
@@ -123,15 +121,18 @@ if menu == "1. 데이터 업로드 및 관리":
     st.subheader("2. 추천 데이터 업로드 (3행 제외)")
     referral_file = st.file_uploader("추천 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u2")
     if referral_file:
-        df_ref_raw = load_file_generic(referral_file, skip_rows=3)
-        if not df_ref_raw.empty:
-            df_ref_raw.iloc[:, 0] = df_ref_raw.iloc[:, 2].astype(str).str.replace('-', '', regex=False)
-            t_idxs = [0, 1, 2, 3, 12, 45, 46, 47]
-            df_ref_final = df_ref_raw.iloc[:, [i for i in t_idxs if i < df_ref_raw.shape[1]]].copy()
-            st.dataframe(df_ref_final.head(3))
-            if st.button("추천 데이터 누적 추가"):
-                append_to_google_sheet(doc, "추천", df_ref_final)
-                st.success("추천 데이터 누적 완료")
+        try:
+            df_ref_raw = load_file_generic(referral_file, skip_rows=3)
+            if not df_ref_raw.empty:
+                df_ref_raw.iloc[:, 0] = df_ref_raw.iloc[:, 2].astype(str).str.replace('-', '', regex=False)
+                t_idxs = [0, 1, 2, 3, 12, 45, 46, 47]
+                df_ref_final = df_ref_raw.iloc[:, [i for i in t_idxs if i < df_ref_raw.shape[1]]].copy()
+                st.dataframe(df_ref_final.head(3))
+                if st.button("추천 데이터 누적 추가"):
+                    append_to_google_sheet(doc, "추천", df_ref_final)
+                    st.success("추천 데이터 누적 완료")
+        except Exception as e:
+            st.error(f"추천 파일 읽기 오류: {e}. 올바른 엑셀 형식이 맞는지 확인해주세요.")
 
     st.divider()
 
@@ -144,18 +145,21 @@ if menu == "1. 데이터 업로드 및 관리":
     
     we_file = st.file_uploader("위멤버스 파일 업로드", type=['xlsx', 'xls', 'csv'], key="u3")
     if we_file:
-        df_we_raw = load_file_generic(we_file, skip_rows=0)
-        if not df_we_raw.empty:
-            df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
-            target_cols = [3, 6, 69]
-            df_we_final = df_we_raw.iloc[:, [i for i in target_cols if i < df_we_raw.shape[1]]].copy()
-            st.dataframe(df_we_final.head(3))
-            if st.button("위멤버스 시트 반영"):
-                overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
-                st.success("위멤버스 데이터 반영 완료")
+        try:
+            df_we_raw = load_file_generic(we_file, skip_rows=0)
+            if not df_we_raw.empty:
+                df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
+                target_cols = [3, 6, 69]
+                df_we_final = df_we_raw.iloc[:, [i for i in target_cols if i < df_we_raw.shape[1]]].copy()
+                st.dataframe(df_we_final.head(3))
+                if st.button("위멤버스 시트 반영"):
+                    overwrite_google_sheet(doc, "위멤버스 가입 여부", df_we_final)
+                    st.success("위멤버스 데이터 반영 완료")
+        except Exception as e:
+            st.error(f"위멤버스 파일 읽기 오류: {e}")
 
 # ==========================================
-# 데이터 처리 로직 (변경된 열 순서 반영)
+# 데이터 처리 로직 (생략 없이 유지)
 # ==========================================
 def get_processed_data(doc, filter_count_one=False):
     try:
@@ -169,7 +173,6 @@ def get_processed_data(doc, filter_count_one=False):
         r_df = pd.DataFrame(r_values).fillna("")
         ref_df = pd.DataFrame(ref_values).fillna("")
         
-        # 적립율/위멤버스 매핑 데이터 준비 및 텍스트 데이터 예외 처리
         rate_dict = {}
         for row in rate_values:
             if len(row) >= 2:
@@ -177,21 +180,16 @@ def get_processed_data(doc, filter_count_one=False):
                 try:
                     val = float(str(row[1]).replace('%','').strip())
                     rate_dict[biz] = val/100 if val > 1 else val
-                except ValueError:
-                    continue
+                except ValueError: continue
                     
         we_dict = {str(row[0]).replace('-', '').strip(): {'제품명': row[1], '비고': row[2] if len(row)>2 else ''} for row in we_values if len(row) > 0}
 
         results = []
         for _, ref_row in ref_df.iterrows():
             target_biz = str(ref_row[0]).replace('-', '').strip()
-            # 시트의 0번 인덱스가 G열(사업자번호)
             matched_rows = r_df[r_df[0] == target_biz]
             
             for _, r_row in matched_rows.iterrows():
-                # 인덱스 구조: 0:G, 1:I, 2:W, 3:X, 4:AA, 5:AL, 6:AM, 7:C, 8:E
-                
-                # 수납횟수 (AL열 -> 인덱스 5) - 헤더가 섞여 있어도 튕기지 않게 텍스트 예외 처리
                 raw_count = str(r_row[5]).strip()
                 pay_count = pd.to_numeric(raw_count, errors='coerce')
                 if pd.isna(pay_count): continue
@@ -200,17 +198,14 @@ def get_processed_data(doc, filter_count_one=False):
                 else:
                     if pay_count <= 0 or pay_count >= 60: continue
 
-                # 청구금액 (E열 -> 인덱스 8) - 헤더가 섞여 있어도 튕기지 않게 텍스트 예외 처리
                 raw_bill = str(r_row[8]).replace(',','').strip()
                 bill_amt = pd.to_numeric(raw_bill, errors='coerce')
                 if pd.isna(bill_amt) or bill_amt < 40000: continue
 
-                # 설치일 (C열 -> 인덱스 7)
                 install_date_raw = str(r_row[7])
                 install_clean = ''.join(filter(str.isdigit, install_date_raw))
                 if install_clean and len(install_clean) >= 8 and int(install_clean[:8]) >= 20260101: continue
                 
-                # 추천일자 필터링
                 rec_date = str(ref_row[4])
                 if ''.join(filter(str.isdigit, rec_date)) > "20251231": continue
 
@@ -225,7 +220,7 @@ def get_processed_data(doc, filter_count_one=False):
                 results.append({
                     "설치일(C)": install_date_raw,
                     "수납횟수(AL)": int(pay_count),
-                    "수납사명": r_row[1], # I열
+                    "수납사명": r_row[1], 
                     "수납사업자번호": target_biz,
                     "추천자회사": ref_row[5],
                     "추천자사업자": rec_biz_raw,
