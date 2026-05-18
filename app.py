@@ -147,7 +147,7 @@ if menu == "1. 데이터 업로드 및 관리":
         df_we_raw = load_file_generic(we_file, skip_rows=0)
         if not df_we_raw.empty:
             df_we_raw.iloc[:, 3] = df_we_raw.iloc[:, 3].astype(str).str.replace('-', '', regex=False)
-            target_cols = [3, 6, 68]
+            target_cols = [3, 6, 67]
             df_we_final = df_we_raw.iloc[:, [i for i in target_cols if i < df_we_raw.shape[1]]].copy()
             st.dataframe(df_we_final.head(3))
             if st.button("위멤버스 시트 반영"):
